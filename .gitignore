@@ -1,0 +1,13 @@
+.build/
+dist/
+.DS_Store
+.swiftpm/
+.env
+.env.*
+*.p12
+*.pfx
+*.pem
+*.key
+*.keychain-db
+*.log
+*.dmg
