@@ -6,8 +6,8 @@
     <key>CFBundleIdentifier</key><string>local.jamie.LightSnap</string>
     <key>CFBundleExecutable</key><string>LightSnap</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>0.1.3</string>
+    <key>CFBundleVersion</key><string>4</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>LSMultipleInstancesProhibited</key><true/>

@@ -18,13 +18,13 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
     private var busy = false {
         didSet {
             canvas.isExporting = busy
-            backdrop.showHandles = !busy && region != nil && canvas.annotations.isEmpty
+            updateSelectionControls()
             for view in toolbar.subviews + stylebar.subviews {
                 (view as? NSControl)?.isEnabled = !busy
             }
         }
     }
-    private var selectedTool = 1
+    private var selectedTool = 0
     private let colors: [NSColor] = [.systemRed, .systemOrange, .systemYellow, .systemGreen, .systemBlue, .black, .white]
     var onClose: (() -> Void)?
     var onLongCapture: ((CaptureRegion) -> Void)?
@@ -37,6 +37,7 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
         canvas = AnnotationCanvas(document: document)
         let window = CaptureOverlayWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
         super.init(window: window)
+        window.cancelAction = { [weak self] in self?.dismiss() }
         window.title = "轻截 · 截图标注"
         window.level = .screenSaver
         window.isOpaque = false
@@ -59,10 +60,17 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
             backdrop.selection = CGRect(x: (screen.frame.width - width) / 2, y: (screen.frame.height - height) / 2 - 30, width: width, height: height)
         }
         backdrop.resizeFinished = { [weak self] rect in self?.resizeSelection(rect) }
+        backdrop.selectionChanged = { [weak self] rect in self?.previewSelection(rect) }
+        backdrop.allowsMove = { [weak self] point in
+            guard let self else { return false }
+            return self.canvas.annotation(atViewPoint: self.canvas.convert(point, from: self.backdrop)) == nil
+        }
         backdrop.resizing = { [weak self] active in
-            self?.scroll.isHidden = active
-            self?.toolbar.isHidden = active
-            self?.stylebar.isHidden = active
+            guard let self else { return }
+            self.canvas.showsImage = !active
+            self.toolbar.isHidden = active
+            self.stylebar.isHidden = active || self.selectedTool == 0
+            if !active { self.layout() }
         }
         layout()
     }
@@ -78,7 +86,7 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
         if scroll.superview == nil { backdrop.addSubview(scroll, positioned: .below, relativeTo: toolbar) }
         canvas.changed = { [weak self] in
             guard let self else { return }
-            self.backdrop.showHandles = !self.busy && self.region != nil && self.canvas.annotations.isEmpty
+            self.updateSelectionControls()
             self.backdrop.status = ""
         }
         canvas.failed = { [weak self] error in self?.showError(error) }
@@ -95,13 +103,14 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
         for (symbol, label, tag) in tools {
             let button = ToolButton(symbol: symbol, label: label, target: self, action: #selector(changeTool(_:)))
             button.tag = tag
-            button.chosen = tag == 1
+            button.chosen = tag == selectedTool
             toolButtons.append(button)
             toolbar.add(button)
         }
         toolbar.separator()
-        let select = ToolButton(symbol: "cursorarrow", label: "选择与移动标注", target: self, action: #selector(changeTool(_:)))
+        let select = ToolButton(symbol: "cursorarrow", label: "移动选区与选择标注", target: self, action: #selector(changeTool(_:)))
         select.tag = 0
+        select.chosen = selectedTool == 0
         toolButtons.append(select)
         toolbar.add(select)
         toolbar.add(ToolButton(symbol: "arrow.uturn.backward", label: "撤销 ⌘Z", target: self, action: #selector(undoEdit)))
@@ -111,7 +120,7 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
         toolbar.add(ToolButton(symbol: "arrow.down.to.line", label: "保存 ⌘S", target: self, action: #selector(saveImage)))
         toolbar.add(ToolButton(symbol: "pin", label: "贴图 ⌘T", target: self, action: #selector(pinImage)))
         toolbar.separator()
-        toolbar.add(ToolButton(symbol: "xmark", label: "取消 Esc", target: self, action: #selector(dismiss)))
+        toolbar.add(ToolButton(symbol: "xmark", label: "取消 Esc / 右键", target: self, action: #selector(dismiss)))
         let done = ToolButton(symbol: "checkmark", label: "完成并复制 ⌘C", target: self, action: #selector(copyImage))
         done.emphasized = true
         toolbar.add(done)
@@ -139,9 +148,13 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
         scroll.frame = rect
         canvas.scale = rect.width / CGFloat(imageDocument.width)
         backdrop.dimensions = "\(imageDocument.width) × \(imageDocument.height) px"
-        backdrop.showHandles = region != nil && canvas.annotations.isEmpty
+        if let region {
+            canvas.annotationOrigin = region.pixelRect.origin
+            scroll.contentView.scroll(to: .zero)
+        }
+        updateSelectionControls()
         let x = max(8, min(rect.maxX - toolbar.frame.width, backdrop.bounds.width - toolbar.frame.width - 8))
-        let fullHeight = toolbar.frame.height + stylebar.frame.height + 10
+        let fullHeight = toolbar.frame.height + (selectedTool == 0 ? 0 : stylebar.frame.height + 10)
         var y = rect.maxY + 9
         if y + fullHeight > backdrop.bounds.height - 8 {
             y = rect.minY - fullHeight - 9
@@ -153,9 +166,23 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
         backdrop.needsDisplay = true
     }
 
+    private func updateSelectionControls() {
+        backdrop.showHandles = !busy && region != nil
+        backdrop.canMoveSelection = !busy && region != nil && selectedTool == 0
+    }
+
+    private func previewSelection(_ rect: CGRect) {
+        guard let region else { return }
+        let pixels = CaptureRegion.pixelRect(for: rect, image: region.background, screenSize: screen.frame.size)
+        scroll.frame = rect
+        canvas.annotationOrigin = pixels.origin
+        canvas.frame.size = rect.size
+        scroll.contentView.scroll(to: .zero)
+        backdrop.dimensions = "\(Int(pixels.width)) × \(Int(pixels.height)) px"
+    }
+
     func present() {
         showWindow(nil)
-        NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         window?.makeFirstResponder(canvas)
     }
@@ -178,7 +205,7 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
         selectedTool = sender.tag
         canvas.tool = selectedTool
         toolButtons.forEach { $0.chosen = $0.tag == selectedTool }
-        stylebar.isHidden = selectedTool == 0
+        layout()
         window?.makeFirstResponder(canvas)
     }
     @objc private func changeColor(_ sender: ToolButton) {
@@ -198,38 +225,33 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
     @objc private func undoEdit() { if !busy { canvas.history.undo() } }
     @objc private func redoEdit() { if !busy { canvas.history.redo() } }
     @objc private func startLong() {
-        guard !busy, let region else { return }
+        guard !busy, !backdrop.isAdjusting, let region else { return }
         dismiss()
         onLongCapture?(region)
     }
 
     private func resizeSelection(_ rect: CGRect) {
-        guard !busy, let old = region else { return }
-        let scale = CGFloat(old.background.width) / screen.frame.width
-        let pixels = CGRect(x: rect.minX * scale, y: rect.minY * scale, width: rect.width * scale, height: rect.height * scale).integral
-        guard let image = old.background.cropping(to: pixels) else { return }
+        guard !busy, let old = region else { backdrop.resizing?(false); return }
+        guard let next = old.cropped(to: rect) else {
+            backdrop.selection = old.rect
+            backdrop.resizing?(false)
+            return
+        }
         busy = true
         Task {
+            defer { busy = false; backdrop.resizing?(false) }
             do {
                 let document = try await Task.detached(priority: .userInitiated) {
-                    let document = try ImageDocument(width: image.width)
-                    try document.append(image)
+                    let document = try ImageDocument(width: next.image.width)
+                    try document.append(next.image)
                     return document
                 }.value
                 imageDocument = document
-                let nextCanvas = AnnotationCanvas(document: document)
-                nextCanvas.tool = selectedTool
-                nextCanvas.color = canvas.color
-                nextCanvas.strokeWidth = canvas.strokeWidth
-                canvas = nextCanvas
-                region = CaptureRegion(screen: old.screen, display: old.display, rect: rect, image: image, background: old.background)
-                setupCanvas()
+                canvas.document = document
+                region = next
+                backdrop.selection = next.rect
                 window?.makeFirstResponder(canvas)
             } catch { backdrop.selection = old.rect; showError(error) }
-            busy = false
-            scroll.isHidden = false
-            toolbar.isHidden = false
-            layout()
         }
     }
 
@@ -241,7 +263,7 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
         if let window { alert.beginSheetModal(for: window) }
     }
     @objc private func saveImage() {
-        guard !busy, let window, window.attachedSheet == nil else { return }
+        guard !busy, !backdrop.isAdjusting, let window, window.attachedSheet == nil else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png, .jpeg]
         panel.canSelectHiddenExtension = true
@@ -260,10 +282,10 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
             self.export(to: url)
         }
     }
-    @objc private func copyImage() { if !busy { export(to: nil) } }
+    @objc private func copyImage() { if !busy, !backdrop.isAdjusting { export(to: nil) } }
 
     @objc private func pinImage() {
-        guard !busy else { return }
+        guard !busy, !backdrop.isAdjusting else { return }
         busy = true
         backdrop.status = "正在贴图…"
         let selection = backdrop.selection
@@ -284,7 +306,7 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
     }
 
     private func renderImage() async throws -> CGImage {
-        let annotations = canvas.annotations
+        let annotations = canvas.exportAnnotations
         let document = imageDocument
         return try await Task.detached(priority: .userInitiated) {
             try autoreleasepool { try document.render(annotations: annotations) }

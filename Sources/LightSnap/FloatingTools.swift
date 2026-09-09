@@ -99,14 +99,20 @@ final class ToolStrip: NSView {
 
 final class EditorBackdrop: NSView {
     var background: CGImage?
-    var selection = CGRect.zero { didSet { needsDisplay = true } }
-    var showHandles = true { didSet { needsDisplay = true } }
+    var selection = CGRect.zero { didSet { needsDisplay = true; window?.invalidateCursorRects(for: self) } }
+    var showHandles = true { didSet { needsDisplay = true; window?.invalidateCursorRects(for: self) } }
+    var canMoveSelection = true { didSet { window?.invalidateCursorRects(for: self) } }
     var dimensions = "" { didSet { needsDisplay = true } }
     var status = "" { didSet { needsDisplay = true } }
     var resizeFinished: ((CGRect) -> Void)?
     var resizing: ((Bool) -> Void)?
+    var selectionChanged: ((CGRect) -> Void)?
+    var allowsMove: ((CGPoint) -> Bool)?
     private var initial = CGRect.zero
     private var handle: Int?
+    private var anchor: CGPoint?
+    private var dragging = false
+    var isAdjusting: Bool { anchor != nil }
     override var isFlipped: Bool { true }
 
     private var handles: [CGPoint] {
@@ -134,7 +140,7 @@ final class EditorBackdrop: NSView {
         outline.stroke()
         if showHandles {
             for point in handles {
-                let box = CGRect(x: point.x - 2.5, y: point.y - 2.5, width: 5, height: 5)
+                let box = CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8)
                 NSColor.white.setFill()
                 box.fill()
                 SnapStyle.accent.setStroke()
@@ -149,30 +155,77 @@ final class EditorBackdrop: NSView {
         NSBezierPath(roundedRect: tag, xRadius: 3, yRadius: 3).fill()
         (text as NSString).draw(at: CGPoint(x: tag.minX + 7, y: tag.minY + 4), withAttributes: attributes)
     }
+    private func handle(at point: CGPoint) -> Int? {
+        guard selection.insetBy(dx: -8, dy: -8).contains(point) else { return nil }
+        for index in [0, 2, 5, 7] {
+            if abs(handles[index].x - point.x) <= 8, abs(handles[index].y - point.y) <= 8 { return index }
+        }
+        if abs(point.y - selection.minY) <= 6 { return 1 }
+        if abs(point.x - selection.minX) <= 6 { return 3 }
+        if abs(point.x - selection.maxX) <= 6 { return 4 }
+        if abs(point.y - selection.maxY) <= 6 { return 6 }
+        return nil
+    }
+    override func resetCursorRects() {
+        guard showHandles, background != nil else { return }
+        if canMoveSelection { addCursorRect(selection, cursor: .openHand) }
+        for index in [1, 6] {
+            addCursorRect(CGRect(x: selection.minX, y: handles[index].y - 6, width: selection.width, height: 12).intersection(bounds), cursor: .resizeUpDown)
+        }
+        for index in [3, 4] {
+            addCursorRect(CGRect(x: handles[index].x - 6, y: selection.minY, width: 12, height: selection.height).intersection(bounds), cursor: .resizeLeftRight)
+        }
+        for index in [0, 2, 5, 7] {
+            addCursorRect(CGRect(x: handles[index].x - 8, y: handles[index].y - 8, width: 16, height: 16).intersection(bounds), cursor: .crosshair)
+        }
+    }
     override func hitTest(_ point: NSPoint) -> NSView? {
-        if showHandles, background != nil, handles.contains(where: { hypot($0.x - point.x, $0.y - point.y) < 8 }) { return self }
-        return super.hitTest(point)
+        let hit = super.hitTest(point)
+        let point = convert(point, from: superview)
+        guard bounds.contains(point), showHandles, background != nil else { return hit }
+        if subviews.contains(where: { $0 is ToolStrip && !$0.isHidden && $0.frame.contains(point) }) { return hit }
+        if handle(at: point) != nil { return self }
+        if canMoveSelection, selection.contains(point), allowsMove?(point) ?? true { return self }
+        return hit
     }
     override func mouseDown(with event: NSEvent) {
         guard showHandles, background != nil else { return }
         let p = convert(event.locationInWindow, from: nil)
-        handle = handles.firstIndex { hypot($0.x - p.x, $0.y - p.y) < 8 }
+        handle = handle(at: p)
+        guard handle != nil || (canMoveSelection && selection.contains(p) && (allowsMove?(p) ?? true)) else { return }
+        anchor = p
         initial = selection
-        if handle != nil { resizing?(true) }
+        dragging = false
     }
     override func mouseDragged(with event: NSEvent) {
-        guard let handle else { return }
-        let p = convert(event.locationInWindow, from: nil)
-        var left = initial.minX, right = initial.maxX, top = initial.minY, bottom = initial.maxY
-        if [0, 3, 5].contains(handle) { left = max(2, min(p.x, right - 12)) }
-        if [2, 4, 7].contains(handle) { right = min(bounds.width - 2, max(p.x, left + 12)) }
-        if [0, 1, 2].contains(handle) { top = max(2, min(p.y, bottom - 12)) }
-        if [5, 6, 7].contains(handle) { bottom = min(bounds.height - 2, max(p.y, top + 12)) }
-        selection = CGRect(x: left, y: top, width: right - left, height: bottom - top).integral
+        updateSelection(to: convert(event.locationInWindow, from: nil))
+    }
+    private func updateSelection(to point: CGPoint) {
+        guard let anchor, dragging || hypot(point.x - anchor.x, point.y - anchor.y) >= 2 else { return }
+        if !dragging { dragging = true; resizing?(true) }
+        if let handle {
+            var left = initial.minX, right = initial.maxX, top = initial.minY, bottom = initial.maxY
+            let dx = point.x - anchor.x, dy = point.y - anchor.y
+            if [0, 3, 5].contains(handle) { left = max(0, min(initial.minX + dx, right - 3)) }
+            if [2, 4, 7].contains(handle) { right = min(bounds.width, max(initial.maxX + dx, left + 3)) }
+            if [0, 1, 2].contains(handle) { top = max(0, min(initial.minY + dy, bottom - 3)) }
+            if [5, 6, 7].contains(handle) { bottom = min(bounds.height, max(initial.maxY + dy, top + 3)) }
+            selection = CGRect(x: left, y: top, width: right - left, height: bottom - top).integral.intersection(bounds)
+        } else {
+            let x = min(bounds.width - initial.width, max(0, initial.minX + point.x - anchor.x))
+            let y = min(bounds.height - initial.height, max(0, initial.minY + point.y - anchor.y))
+            selection = CGRect(x: x.rounded(), y: y.rounded(), width: initial.width, height: initial.height)
+        }
+        selectionChanged?(selection)
     }
     override func mouseUp(with event: NSEvent) {
-        guard handle != nil else { return }
+        guard anchor != nil else { return }
+        updateSelection(to: convert(event.locationInWindow, from: nil))
+        let changed = dragging && selection != initial
+        anchor = nil
         handle = nil
-        resizeFinished?(selection)
+        dragging = false
+        if changed { resizeFinished?(selection) }
+        else { resizing?(false) }
     }
 }

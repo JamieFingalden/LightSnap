@@ -3,11 +3,15 @@ import CaptureCore
 
 @MainActor
 final class AnnotationCanvas: NSView {
-    let document: ImageDocument
+    var document: ImageDocument {
+        didSet { readErrorShown = false; needsDisplay = true }
+    }
+    var annotationOrigin = CGPoint.zero { didSet { needsDisplay = true } }
+    var showsImage = true { didSet { needsDisplay = true } }
     var annotations: [Annotation] = []
     let history = UndoManager()
     var selected: Int?
-    var tool = 1
+    var tool = 0 { didSet { window?.invalidateCursorRects(for: self) } }
     var color = NSColor.systemRed.cgColor
     var strokeWidth: CGFloat = 4
     var dirty = false
@@ -32,6 +36,15 @@ final class AnnotationCanvas: NSView {
     override var acceptsFirstResponder: Bool { true }
     override var undoManager: UndoManager? { history }
 
+    var exportAnnotations: [Annotation] {
+        annotations.map { annotation in
+            var result = annotation
+            result.start.x -= annotationOrigin.x; result.end.x -= annotationOrigin.x
+            result.start.y -= annotationOrigin.y; result.end.y -= annotationOrigin.y
+            return result
+        }
+    }
+
     init(document: ImageDocument) {
         self.document = document
         super.init(frame: CGRect(x: 0, y: 0, width: document.width, height: document.height))
@@ -41,18 +54,24 @@ final class AnnotationCanvas: NSView {
     }
     required init?(coder: NSCoder) { fatalError("不支持从归档初始化") }
 
+    override func resetCursorRects() { addCursorRect(bounds, cursor: tool == 0 ? .openHand : .crosshair) }
+
     override func draw(_ dirtyRect: NSRect) {
         guard !isExporting, let context = NSGraphicsContext.current?.cgContext else { return }
         context.saveGState()
         context.scaleBy(x: scale, y: scale)
         let visible = CGRect(x: dirtyRect.minX / scale, y: dirtyRect.minY / scale, width: dirtyRect.width / scale, height: dirtyRect.height / scale)
-        do { try document.draw(in: context, visible: visible) }
-        catch {
-            if !readErrorShown {
-                readErrorShown = true
-                DispatchQueue.main.async { [weak self] in self?.failed?(error) }
+        if showsImage {
+            do { try document.draw(in: context, visible: visible) }
+            catch {
+                if !readErrorShown {
+                    readErrorShown = true
+                    DispatchQueue.main.async { [weak self] in self?.failed?(error) }
+                }
             }
         }
+        // 标注保留在原始截图坐标中，调整选区不改写标注或撤销历史。
+        context.translateBy(x: -annotationOrigin.x, y: -annotationOrigin.y)
         for annotation in annotations { annotation.draw(in: context) }
         draft?.draw(in: context)
         if let selected, annotations.indices.contains(selected) {
@@ -64,8 +83,15 @@ final class AnnotationCanvas: NSView {
         context.restoreGState()
     }
     private func point(_ event: NSEvent) -> CGPoint {
-        let p = convert(event.locationInWindow, from: nil)
-        return CGPoint(x: min(CGFloat(document.width), max(0, p.x / scale)), y: min(CGFloat(document.height), max(0, p.y / scale)))
+        imagePoint(convert(event.locationInWindow, from: nil))
+    }
+    private func imagePoint(_ point: CGPoint) -> CGPoint {
+        CGPoint(x: annotationOrigin.x + min(CGFloat(document.width), max(0, point.x / scale)),
+                y: annotationOrigin.y + min(CGFloat(document.height), max(0, point.y / scale)))
+    }
+    func annotation(atViewPoint point: CGPoint) -> Int? {
+        let point = imagePoint(point)
+        return annotations.indices.reversed().first { annotations[$0].contains(point, tolerance: 7 / scale) }
     }
     override func mouseDown(with event: NSEvent) {
         guard !isExporting else { return }
@@ -74,7 +100,7 @@ final class AnnotationCanvas: NSView {
         anchor = p
         beforeDrag = annotations
         if tool == 0 {
-            selected = annotations.indices.reversed().first { annotations[$0].contains(p, tolerance: 7 / scale) }
+            selected = annotation(atViewPoint: convert(event.locationInWindow, from: nil))
         } else {
             selected = nil
             draft = Annotation(kind: Annotation.Kind(rawValue: tool - 1)!, start: p, end: p, color: color, lineWidth: strokeWidth)

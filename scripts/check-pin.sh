@@ -56,6 +56,7 @@ SWIFT
 swiftc -swift-version 5 -target arm64-apple-macosx14.0 -parse-as-library \
     -module-cache-path "${CLANG_MODULE_CACHE_PATH}" -I "${BIN_DIR}/Modules" \
     "${PROJECT_DIR}/Sources/LightSnap/CaptureService.swift" \
+    "${PROJECT_DIR}/Sources/LightSnap/ElementLocator.swift" \
     "${PROJECT_DIR}/Sources/LightSnap/FloatingTools.swift" \
     "${PROJECT_DIR}/Sources/LightSnap/PinnedImageWindow.swift" \
     "${PROJECT_DIR}/.build/PinWindowCheck.swift" \

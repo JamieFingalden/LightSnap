@@ -15,6 +15,22 @@ struct CaptureRegion {
     let image: CGImage
     let background: CGImage
 
+    var pixelRect: CGRect { Self.pixelRect(for: rect, image: background, screenSize: screen.frame.size) }
+
+    static func pixelRect(for rect: CGRect, image: CGImage, screenSize: CGSize) -> CGRect {
+        let sx = CGFloat(image.width) / screenSize.width
+        let sy = CGFloat(image.height) / screenSize.height
+        return CGRect(x: rect.minX * sx, y: rect.minY * sy, width: rect.width * sx, height: rect.height * sy).integral
+    }
+
+    func cropped(to rect: CGRect) -> CaptureRegion? {
+        let bounds = CGRect(origin: .zero, size: screen.frame.size)
+        let rect = rect.intersection(bounds).integral.intersection(bounds)
+        guard rect.width >= 3, rect.height >= 3,
+              let image = background.cropping(to: Self.pixelRect(for: rect, image: background, screenSize: screen.frame.size)) else { return nil }
+        return CaptureRegion(screen: screen, display: display, rect: rect, image: image, background: background)
+    }
+
     var screenRect: CGRect {
         CGRect(x: screen.frame.minX + rect.minX, y: screen.frame.maxY - rect.maxY,
                width: rect.width, height: rect.height)
@@ -71,9 +87,27 @@ enum CaptureService {
     }
 }
 
-final class CaptureOverlayWindow: NSWindow {
+final class CaptureOverlayWindow: NSPanel {
+    var cancelAction: (() -> Void)?
     override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
+        // 截图与贴图只接收键盘焦点，不激活轻截，避免让原应用退到后台或切换桌面。
+        super.init(contentRect: contentRect, styleMask: style.union(.nonactivatingPanel), backing: backingStoreType, defer: flag)
+        hidesOnDeactivate = false
+    }
+
+    override func sendEvent(_ event: NSEvent) {
+        if attachedSheet == nil, let cancelAction,
+           event.type == .rightMouseDown || (event.type == .keyDown && event.keyCode == 53)
+            || (event.type == .leftMouseDown && event.modifierFlags.contains(.control)) {
+            // 双指辅助点按由 macOS 发送右键事件；统一处理整个浮层，避免画布或工具栏截获。
+            cancelAction()
+            return
+        }
+        super.sendEvent(event)
+    }
 }
 
 @MainActor
@@ -83,21 +117,22 @@ final class RegionSelector {
 
     func show(shots: [ScreenShot], long: Bool, completion: @escaping (CaptureRegion?) -> Void) {
         onFinish = completion
+        let candidates = SelectionWindow.snapshot()
         for shot in shots {
             let window = CaptureOverlayWindow(contentRect: shot.screen.frame, styleMask: .borderless,
                                               backing: .buffered, defer: false)
             window.level = .screenSaver
             window.animationBehavior = .none
             window.isReleasedWhenClosed = false
+            window.acceptsMouseMovedEvents = true
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            let view = SelectionView(shot: shot, long: long)
+            let view = SelectionView(image: shot.image, displayFrame: CGDisplayBounds(shot.display.displayID), candidates: candidates, long: long)
+            window.cancelAction = { [weak view] in view?.cancelOperation(nil) }
             view.finished = { [weak self] rect in
                 guard let self else { return }
                 var region: CaptureRegion?
                 if let rect {
-                    let sx = CGFloat(shot.image.width) / shot.screen.frame.width
-                    let sy = CGFloat(shot.image.height) / shot.screen.frame.height
-                    let pixels = CGRect(x: rect.minX * sx, y: rect.minY * sy, width: rect.width * sx, height: rect.height * sy).integral
+                    let pixels = CaptureRegion.pixelRect(for: rect, image: shot.image, screenSize: shot.screen.frame.size)
                     if let image = shot.image.cropping(to: pixels) {
                         region = CaptureRegion(screen: shot.screen, display: shot.display, rect: rect, image: image, background: shot.image)
                     }
@@ -110,9 +145,9 @@ final class RegionSelector {
             if shot.screen.frame.contains(NSEvent.mouseLocation) {
                 window.makeKey()
                 window.makeFirstResponder(view)
+                view.preview(at: view.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil))
             }
         }
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     func cancel() { finish(nil) }
@@ -126,30 +161,103 @@ final class RegionSelector {
     }
 }
 
-private final class SelectionView: NSView {
-    let shot: ScreenShot
+final class SelectionView: NSView {
+    let image: CGImage
+    let displayFrame: CGRect
+    let candidates: [SelectionWindow]
     let long: Bool
     var finished: ((CGRect?) -> Void)?
-    var anchor: CGPoint?
-    var selection = CGRect.zero
+    private var anchor: CGPoint?
+    private var dragging = false
+    private var confirming = false
+    private var hoverPoint: CGPoint?
+    private var hoveredWindow: SelectionWindow?
+    private let locator = ElementLocator()
+    private var tracking: NSTrackingArea?
+    private(set) var selection = CGRect.zero
+    private var minimumSize: CGFloat { long ? 100 : 3 }
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
-    init(shot: ScreenShot, long: Bool) {
-        self.shot = shot
+    init(image: CGImage, displayFrame: CGRect, candidates: [SelectionWindow], long: Bool) {
+        self.image = image
+        self.displayFrame = displayFrame
+        self.candidates = candidates
         self.long = long
-        super.init(frame: CGRect(origin: .zero, size: shot.screen.frame.size))
-        setAccessibilityLabel("拖动框选截图区域，Escape 取消")
+        super.init(frame: CGRect(origin: .zero, size: displayFrame.size))
+        setAccessibilityLabel("悬停定位，单击选中截图区域，拖动手动框选，Escape 或右键取消")
     }
     required init?(coder: NSCoder) { fatalError("不支持从归档初始化") }
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .crosshair) }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        tracking = area
+    }
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { locator.cancel() }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    private func localRect(_ frame: CGRect) -> CGRect {
+        let clipped = frame.intersection(displayFrame)
+        guard !clipped.isNull else { return .zero }
+        return clipped.offsetBy(dx: -displayFrame.minX, dy: -displayFrame.minY).integral.intersection(bounds)
+    }
+
+    func preview(at point: CGPoint) {
+        guard anchor == nil, !confirming, bounds.contains(point) else { return }
+        hoverPoint = point
+        let global = CGPoint(x: displayFrame.minX + point.x, y: displayFrame.minY + point.y)
+        let target = candidates.first { $0.frame.contains(global) }
+        let fallback = target.map { localRect($0.frame) } ?? bounds
+        // 同一窗口内等待控件结果时保留原选区，避免先放大到窗口再缩回控件造成遮罩闪烁。
+        if target != hoveredWindow || selection.isEmpty {
+            if selection != fallback { selection = fallback; needsDisplay = true }
+        }
+        hoveredWindow = target
+        guard let target else { locator.cancel(); return }
+        locator.locate(at: global, in: target, minimumSize: minimumSize) { [weak self] frame in
+            self?.applyHoverResult(frame, in: target, at: point)
+        }
+    }
+
+    func applyHoverResult(_ frame: CGRect?, in target: SelectionWindow, at point: CGPoint) {
+        guard anchor == nil, !confirming, hoveredWindow == target,
+              let current = hoverPoint, let frame else { return }
+        let rect = localRect(frame)
+        // 过期的窗口结果不能覆盖新位置的控件选区；暂时读取失败也保留已有预览。
+        guard rect.contains(current), current == point || rect != localRect(target.frame),
+              rect.width >= minimumSize, rect.height >= minimumSize, rect != selection else { return }
+        selection = rect
+        needsDisplay = true
+    }
+
+    override func mouseMoved(with event: NSEvent) { preview(at: convert(event.locationInWindow, from: nil)) }
+    override func mouseEntered(with event: NSEvent) {
+        window?.makeKey()
+        window?.makeFirstResponder(self)
+        mouseMoved(with: event)
+    }
+    override func mouseExited(with event: NSEvent) {
+        guard anchor == nil, !confirming else { return }
+        locator.cancel()
+        hoverPoint = nil
+        hoveredWindow = nil
+        selection = .zero
+        needsDisplay = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.saveGState()
         context.translateBy(x: 0, y: bounds.height)
         context.scaleBy(x: 1, y: -1)
-        context.draw(shot.image, in: bounds)
+        context.draw(image, in: bounds)
         context.restoreGState()
         let shade = NSBezierPath(rect: bounds)
         if !selection.isEmpty { shade.appendRect(selection) }
@@ -162,10 +270,10 @@ private final class SelectionView: NSView {
             outline.lineWidth = 1.5
             outline.stroke()
         }
-        let scale = shot.screen.backingScaleFactor
-        let text = selection.isEmpty
-            ? (long ? "框选滚动内容区 · 避开固定栏和滚动条 · Esc 取消" : "拖动选择区域 · 双击截取当前屏幕 · Esc 取消")
-            : "\(Int(selection.width * scale)) × \(Int(selection.height * scale)) px · 松开确认"
+        let hint = dragging ? "松开确认 · Esc / 右键取消"
+            : (long ? "单击选中 · 拖动框选滚动内容区 · Esc / 右键取消" : "单击选中 · 拖动框选 · 空格全屏 · Esc / 右键取消")
+        let text = selection.isEmpty ? hint
+            : "\(Int(selection.width * CGFloat(image.width) / bounds.width)) × \(Int(selection.height * CGFloat(image.height) / bounds.height)) px · \(hint)"
         let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.white]
         let size = (text as NSString).size(withAttributes: attributes)
         let x = selection.isEmpty ? (bounds.width - size.width - 14) / 2 : min(selection.minX, bounds.width - size.width - 20)
@@ -176,24 +284,63 @@ private final class SelectionView: NSView {
         (text as NSString).draw(at: CGPoint(x: box.minX + 7, y: box.minY + 4), withAttributes: attributes)
     }
     override func mouseDown(with event: NSEvent) {
+        guard !confirming else { return }
         window?.makeKey()
         window?.makeFirstResponder(self)
-        if event.clickCount == 2, !long { finished?(bounds); return }
-        anchor = convert(event.locationInWindow, from: nil)
-        selection = .zero
+        let point = convert(event.locationInWindow, from: nil)
+        preview(at: point)
+        locator.cancel()
+        anchor = point
+        dragging = false
     }
     override func mouseDragged(with event: NSEvent) {
+        updateDrag(to: convert(event.locationInWindow, from: nil))
+    }
+    private func updateDrag(to point: CGPoint) {
         guard let anchor else { return }
-        let point = convert(event.locationInWindow, from: nil)
+        guard dragging || hypot(point.x - anchor.x, point.y - anchor.y) >= 3 else { return }
+        dragging = true
         selection = CGRect(x: min(anchor.x, point.x), y: min(anchor.y, point.y),
                            width: abs(point.x - anchor.x), height: abs(point.y - anchor.y)).intersection(bounds).integral
         needsDisplay = true
     }
     override func mouseUp(with event: NSEvent) {
-        if selection.width >= (long ? 100 : 3), selection.height >= (long ? 100 : 3) { finished?(selection) }
-        else { anchor = nil; selection = .zero; needsDisplay = true }
+        guard anchor != nil else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        updateDrag(to: point)
+        anchor = nil
+        let manual = dragging
+        dragging = false
+        if !manual, let target = hoveredWindow {
+            // 单击时等最终命中结果，避免首次悬停尚未完成就把整个窗口截下来。
+            confirming = true
+            let global = CGPoint(x: displayFrame.minX + point.x, y: displayFrame.minY + point.y)
+            locator.locate(at: global, in: target, minimumSize: minimumSize) { [weak self] frame in
+                guard let self, self.confirming else { return }
+                self.confirming = false
+                // 单击确认不能沿用等待期间保留的旧控件，读取失败时明确使用当前窗口。
+                self.selection = self.localRect(frame ?? target.frame)
+                self.confirmSelection(at: point)
+            }
+        } else { confirmSelection(at: point) }
     }
+
+    private func confirmSelection(at point: CGPoint) {
+        if selection.width >= minimumSize, selection.height >= minimumSize { locator.cancel(); finished?(selection) }
+        else { selection = .zero; preview(at: point); needsDisplay = true }
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        locator.cancel()
+        confirming = false
+        anchor = nil
+        dragging = false
+        finished?(nil)
+    }
+
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { finished?(nil) } else { super.keyDown(with: event) }
+        if event.keyCode == 53 { cancelOperation(nil) }
+        else if event.keyCode == 49, !long { locator.cancel(); finished?(bounds) }
+        else { super.keyDown(with: event) }
     }
 }
