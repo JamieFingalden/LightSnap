@@ -6,8 +6,8 @@
     <key>CFBundleIdentifier</key><string>local.jamie.LightSnap</string>
     <key>CFBundleExecutable</key><string>LightSnap</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.3</string>
-    <key>CFBundleVersion</key><string>4</string>
+    <key>CFBundleShortVersionString</key><string>0.1.4</string>
+    <key>CFBundleVersion</key><string>5</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>LSMultipleInstancesProhibited</key><true/>
@@ -15,4 +15,7 @@
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
+    <key>NSMicrophoneUsageDescription</key><string>轻截在你开启麦克风录制时收录讲解声音。</string>
+    <key>NSCameraUsageDescription</key><string>轻截在你选择摄像头后录制画中画。</string>
+    <key>NSCameraUseContinuityCameraDeviceType</key><true/>
 </dict></plist>

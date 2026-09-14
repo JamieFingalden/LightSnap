@@ -6,6 +6,7 @@ import ScreenCaptureKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let hotkeys = HotKeys()
+    private let recording = RecordingController()
     private var selector: RegionSelector?
     private var editor: EditorWindow?
     private var pins: [PinnedImageWindow] = []
@@ -17,17 +18,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         setupMenu()
+        recording.stateChanged = { [weak self] in self?.updateRecordingStatus() }
+        recording.canStart = { [weak self] in
+            guard let self, self.prepareCapture() else { return false }
+            self.capturing = false
+            return true
+        }
         hotkeys.action = { [weak self] id in
-            if self?.longCapture != nil { self?.longCapture?.finishCapture() }
+            if id == 3 { self?.recordScreen() }
+            else if id == 4 { self?.recording.togglePause() }
+            else if self?.longCapture != nil { self?.longCapture?.finishCapture() }
             else { self?.capture(long: id == 2) }
         }
         let registered = hotkeys.register()
-        if CommandLine.arguments.contains("--demo") { demo() }
+        let arguments = CommandLine.arguments
+        if let index = arguments.firstIndex(of: "--open-recording"), arguments.indices.contains(index + 1) {
+            do { recording.open(try RecordingDocument.open(URL(fileURLWithPath: arguments[index + 1]))) }
+            catch { showError(error) }
+        }
+        else if arguments.contains("--recording") { recording.presentSetup() }
+        else if arguments.contains("--demo") { demo() }
         else { showWelcome() }
         if !registered { showError(CaptureError.message("部分快捷键被其他应用占用，可在设置中更换；菜单截图仍可使用。")) }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if recording.isBusy || recording.phase == .preview { recording.present(); return true }
         guard !hasVisibleWindows, !capturing, editor == nil, longCapture == nil else { return true }
         if CommandLine.arguments.contains("--demo") { demo() }
         else { showWelcome() }
@@ -39,9 +55,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = NSImage(systemSymbolName: "viewfinder", accessibilityDescription: "轻截")
         statusItem.button?.toolTip = "轻截 · 截图与标注"
         let menu = NSMenu()
+        menu.autoenablesItems = false
         for (title, action) in [("区域截图", #selector(regionCapture)), ("窗口截图…", #selector(windowCapture)), ("当前屏幕截图", #selector(screenCapture)), ("长截图", #selector(scrollCapture))] {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        for (index, entry) in [("录屏…", #selector(recordScreen)), ("暂停录屏", #selector(pauseRecording)), ("打开已有录屏…", #selector(openRecording)), ("录屏文件夹", #selector(showRecordings))].enumerated() {
+            let item = NSMenuItem(title: entry.0, action: entry.1, keyEquivalent: "")
+            item.target = self
+            item.tag = 30 + index
+            item.isEnabled = index != 1
             menu.addItem(item)
         }
         menu.addItem(.separator())
@@ -57,6 +82,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle: "退出轻截", action: #selector(quit), keyEquivalent: "q").target = self
         appItem.submenu = appMenu
         main.addItem(appItem)
+        let recordingItem = NSMenuItem(title: "录屏", action: nil, keyEquivalent: "")
+        let recordingMenu = NSMenu(title: "录屏")
+        recordingMenu.addItem(withTitle: "新建录屏…", action: #selector(recordScreen), keyEquivalent: "").target = self
+        recordingMenu.addItem(withTitle: "打开已有录屏…", action: #selector(openRecording), keyEquivalent: "o").target = self
+        recordingMenu.addItem(withTitle: "录屏文件夹", action: #selector(showRecordings), keyEquivalent: "").target = self
+        recordingItem.submenu = recordingMenu
+        main.addItem(recordingItem)
         let editItem = NSMenuItem()
         editItem.title = "编辑"
         let editMenu = NSMenu(title: "编辑")
@@ -71,8 +103,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func regionCapture() { capture(long: false) }
     @objc private func scrollCapture() { capture(long: true) }
 
+    @objc private func recordScreen() {
+        if recording.isRecording { recording.stop(); return }
+        if recording.isBusy { recording.present(); return }
+        guard prepareCapture() else { return }
+        capturing = false
+        recording.presentSetup()
+    }
+    @objc private func pauseRecording() { recording.togglePause() }
+    @objc private func openRecording() {
+        guard !capturing, longCapture == nil else { return }
+        recording.openDialog()
+    }
+    @objc private func showRecordings() {
+        do {
+            try FileManager.default.createDirectory(at: RecordingDocument.libraryURL, withIntermediateDirectories: true)
+            NSWorkspace.shared.open(RecordingDocument.libraryURL)
+        } catch { showError(error) }
+    }
+    private func updateRecordingStatus() {
+        let active = recording.isRecording
+        statusItem.length = active ? NSStatusItem.variableLength : NSStatusItem.squareLength
+        statusItem.button?.image = NSImage(systemSymbolName: active ? "record.circle.fill" : "viewfinder", accessibilityDescription: active ? "正在录屏" : "轻截")
+        statusItem.button?.contentTintColor = active ? (recording.phase == .paused ? .systemOrange : .systemRed) : nil
+        statusItem.button?.title = active ? " \(recording.statusTitle)" : ""
+        statusItem.button?.toolTip = active ? "轻截 · \(recording.phase == .paused ? "录屏已暂停" : "正在录屏")" : "轻截 · 截图与录屏"
+        statusItem.menu?.item(withTag: 30)?.title = active ? "结束录屏" : "录屏…"
+        statusItem.menu?.item(withTag: 31)?.title = recording.phase == .paused ? "继续录屏" : "暂停录屏"
+        statusItem.menu?.item(withTag: 31)?.isEnabled = active
+        statusItem.menu?.item(withTag: 32)?.isEnabled = !recording.isBusy
+    }
+
     private func prepareCapture() -> Bool {
-        guard !capturing, longCapture == nil else { NSSound.beep(); return false }
+        guard !capturing, longCapture == nil, !recording.isBusy else { NSSound.beep(); return false }
         if let editor {
             editor.window?.performClose(nil)
             if self.editor != nil { return false }
@@ -230,7 +293,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let capture = NSButton(title: "开始截图", target: self, action: #selector(regionCapture))
             capture.bezelColor = .systemTeal
             let long = NSButton(title: "开始长截图", target: self, action: #selector(scrollCapture))
-            let buttons = NSStackView(views: [capture, long])
+            let record = NSButton(title: "开始录屏", target: self, action: #selector(recordScreen))
+            let buttons = NSStackView(views: [capture, long, record])
             buttons.spacing = 12
             let detail = NSTextField(wrappingLabelWithString: "默认快捷键：⌃1 截图，⌃2 长截图\n长截图：框选内容区，手动缓慢向下滚动；再次按快捷键完成。\n标注后按 ⌘T 贴图、⌘C 复制、⌘S 保存、⌘Z 撤销。")
             detail.font = .systemFont(ofSize: 12)
@@ -259,9 +323,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings?.showWindow(nil)
     }
     @objc private func quit() {
+        guard recording.prepareToQuit() else { return }
         if longCapture != nil { longCapture?.finishCapture(); return }
         if let editor { editor.window?.performClose(nil); if self.editor != nil { return } }
         NSApp.terminate(nil)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        recording.prepareToQuit() ? .terminateNow : .terminateCancel
     }
 
     private func demo() {

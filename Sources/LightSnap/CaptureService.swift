@@ -39,13 +39,13 @@ struct CaptureRegion {
 
 @MainActor
 enum CaptureService {
-    static func content() async throws -> SCShareableContent {
-        try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+    static func content(excludingDesktopWindows: Bool = true) async throws -> SCShareableContent {
+        try await SCShareableContent.excludingDesktopWindows(excludingDesktopWindows, onScreenWindowsOnly: true)
     }
 
-    static func filter(display: SCDisplay, content: SCShareableContent) -> SCContentFilter {
+    static func filter(display: SCDisplay, content: SCShareableContent, excludingWindows: [SCWindow] = []) -> SCContentFilter {
         let ownApp = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
-        return SCContentFilter(display: display, excludingApplications: ownApp, exceptingWindows: [])
+        return SCContentFilter(display: display, excludingApplications: ownApp, exceptingWindows: excludingWindows)
     }
 
     static func configuration(display: SCDisplay, screen: NSScreen, rect: CGRect? = nil) -> SCStreamConfiguration {

@@ -1,18 +1,18 @@
 # 轻截 LightSnap
 
-面向 Apple Silicon 的 macOS 原生截图工具，使用 Swift、AppKit、ScreenCaptureKit 和系统图形框架，无第三方依赖。需要 macOS 14 或更新版本。
+面向 Apple Silicon 的 macOS 原生截图与录屏工具，使用 Swift、AppKit、ScreenCaptureKit 和系统图形框架，无第三方依赖。需要 macOS 14 或更新版本。
 
-当前源码及本地安装包为 **0.1.2 预览版**，GitHub Releases 目前提供 v0.1.0。已授权后仍出现权限提示的问题尚待实机验证，详见下方说明及[发布说明](docs/releases/v0.1.0.md)。
+当前版本为 **0.1.4 预览版**，新增屏幕、窗口和区域录制，支持预览样式调整与 MP4／GIF 导出，详见[发布说明](docs/releases/v0.1.4.md)。
 
 ![截图与浮动工具栏](docs/ui-preview.png)
 
 ## 安装与运行
 
-从 [GitHub Releases](https://github.com/JamieFingalden/LightSnap/releases) 下载 `LightSnap-0.1.0-arm64.dmg`，打开后将 `LightSnap.app` 拖入 `Applications` 文件夹。安装包采用临时签名，未经过 Apple 公证；首次打开可能需要在 macOS「隐私与安全性」中确认。
+从 [GitHub Releases](https://github.com/JamieFingalden/LightSnap/releases) 下载 `LightSnap-0.1.4-arm64.dmg`，打开后将 `LightSnap.app` 拖入 `Applications` 文件夹。安装包采用临时签名，未经过 Apple 公证；首次打开可能需要在 macOS「隐私与安全性」中确认。
 
-包含跨应用元素定位和右键取消改进的本地安装包位于 `dist/LightSnap-0.1.3-arm64.dmg`。
+本地安装包位于 `dist/LightSnap-0.1.4-arm64.dmg`，同目录的 `.sha256` 文件可校验安装包。
 
-从源码构建后，也可以直接打开 `dist/LightSnap.app`。启动后从菜单栏进入截图。首次截图需要在「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」中允许轻截；如果系统要求，退出后重新打开。
+从源码构建后，也可以直接打开 `dist/LightSnap.app`。启动后从菜单栏进入截图或录屏。首次截图或录屏需要在「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」中允许轻截；如果系统要求，退出后重新打开。
 
 如果已经允许且重启后仍被系统拒绝，请在权限列表中删除旧的「轻截」，重新添加当前 `dist/LightSnap.app`，开启权限后再退出并重新打开。本地默认使用临时签名，重新构建后旧授权可能失效。
 
@@ -20,6 +20,8 @@
 | --- | --- |
 | 区域截图 | Control + 1 |
 | 长截图／结束长截图 | Control + 2 |
+| 打开录屏／结束录屏 | Control + 3 |
+| 暂停／继续录屏 | Control + 4 |
 | 将当前截图贴到桌面 | Command + T（截图标注时） |
 | 完成并复制 | Command + C |
 | 保存 PNG／JPEG | Command + S |
@@ -31,6 +33,14 @@
 框选后，选区留在原位置，右下方显示浮动工具栏，默认使用移动工具。拖动选区内空白处调整位置，拖动四边或四角调整大小；调整期间实时预览，已有标注仍对齐原截图内容，撤销与重做记录保留。点击矩形、椭圆、箭头或直线工具后才开始绘制；使用移动工具拖动图形边缘调整标注位置，按 Delete 删除。
 
 截图与标注浮层采用不激活应用的面板，避免截图时主动将原应用切到后台。微信普通窗口消失的现象仍待实机回归验证。
+
+## 录屏
+
+菜单栏「录屏」支持屏幕、窗口和区域。可以选择系统声音、麦克风、摄像头和倒计时；录制时通过浮动控制条或快捷键暂停、继续与结束。
+
+录完直接进入预览，支持自动缩放、平滑与放大鼠标、闲置隐藏、点击动效、快捷键提示、背景与留白、圆角阴影、摄像头位置和独立音量。可切换原始、横屏、竖屏和方形画布，导出最高 4K / 60 fps 的 MP4，或 30 秒以内的 GIF。没有字幕功能和时间轴编辑器。
+
+原片与样式保存在「桌面 / LightSnap」，MP4 与 GIF 默认导出到桌面。关闭预览后仍可从「打开已有录屏」继续调整、导出。录屏功能、权限与验证方法见[录屏说明](docs/recording.md)。
 
 ## 智能选区
 
