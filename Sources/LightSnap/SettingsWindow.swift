@@ -59,11 +59,14 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
         }
     }
     required init?(coder: NSCoder) { fatalError("不支持从归档初始化") }
-    func windowDidBecomeKey(_ notification: Notification) { refreshSelectionStatus() }
+    func windowDidBecomeKey(_ notification: Notification) {
+        refreshSelectionStatus()
+        PinGestureTap.install()
+    }
     private func refreshSelectionStatus() {
         selectionStatus.stringValue = AXIsProcessTrusted()
-            ? "智能选区：已允许识别窗口内控件。截图时悬停定位、单击选中，拖动可手动框选。"
-            : "智能选区：窗口定位已可用。允许辅助功能后，还可识别按钮、列表和内容区域。"
+            ? "智能选区：已允许识别窗口内控件。截图时悬停定位、单击选中，拖动可手动框选。贴图可用触控板捏合缩放。"
+            : "智能选区：窗口定位已可用。允许辅助功能后，还可识别按钮、列表和内容区域，贴图也能响应触控板捏合缩放。"
     }
     @objc private func openAccessibilitySettings() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
