@@ -13,6 +13,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
     private let login = NSButton(checkboxWithTitle: "登录时启动", target: nil, action: nil)
     private let message = NSTextField(wrappingLabelWithString: "快捷键冲突时请更换组合。")
     private let selectionStatus = NSTextField(wrappingLabelWithString: "")
+    private let versionLabel = NSTextField(labelWithString: "")
     var changed: (() -> Bool)?
     private let keys: [(String, UInt32)] = [("A", 0), ("S", 1), ("D", 2), ("F", 3), ("G", 5), ("Q", 12), ("W", 13), ("E", 14), ("R", 15), ("1", 18), ("2", 19), ("3", 20), ("4", 21)]
     private let modifiers: [UInt32] = [UInt32(controlKey), UInt32(controlKey | optionKey), UInt32(cmdKey | shiftKey), UInt32(cmdKey | optionKey)]
@@ -47,7 +48,10 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
         selectionStatus.font = .systemFont(ofSize: 12)
         selectionStatus.textColor = .secondaryLabelColor
         let permission = NSButton(title: "设置元素定位权限…", target: self, action: #selector(openAccessibilitySettings))
-        let stack = NSStackView(views: [grid, apply, login, message, selectionStatus, permission])
+        versionLabel.stringValue = Self.versionText()
+        versionLabel.font = .systemFont(ofSize: 12)
+        versionLabel.textColor = .secondaryLabelColor
+        let stack = NSStackView(views: [grid, apply, login, message, selectionStatus, permission, versionLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 18
@@ -62,6 +66,16 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) {
         refreshSelectionStatus()
         PinGestureTap.install()
+    }
+    private static func versionText() -> String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String
+        let build = info?["CFBundleVersion"] as? String
+        switch (short, build) {
+        case let (s?, b?): return "轻截 v\(s)（build \(b)）"
+        case let (s?, nil): return "轻截 v\(s)"
+        default: return "轻截开发版（未打包运行）"
+        }
     }
     private func refreshSelectionStatus() {
         selectionStatus.stringValue = AXIsProcessTrusted()
