@@ -36,6 +36,11 @@ final class RecordingController: NSObject, ObservableObject, NSWindowDelegate {
     var cameraSession: AVCaptureSession? { options.cameraID.isEmpty ? nil : capture?.cameraSession }
     var isBusy: Bool { ![Phase.idle, .preview].contains(phase) }
     var isRecording: Bool { phase == .recording || phase == .paused }
+    var videoAspectRatio: CGFloat {
+        guard let document else { return 16.0 / 9 }
+        let size = style.outputSize(source: document.manifest.size)
+        return size.height > 0 ? size.width / size.height : 16.0 / 9
+    }
     var hasSource: Bool {
         switch options.sourceKind {
         case 0, 2: return !displays.isEmpty
@@ -484,7 +489,7 @@ final class RecordingController: NSObject, ObservableObject, NSWindowDelegate {
     func cancelExport() { exporter.cancel() }
 
     func chooseBackground() {
-        guard let document, phase == .preview else { return }
+        guard phase == .preview else { return }
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.png, .jpeg, .heic, .tiff]
         panel.title = "选择录屏背景"
@@ -492,6 +497,21 @@ final class RecordingController: NSObject, ObservableObject, NSWindowDelegate {
               let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 4096,
                                                                          kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary) else { return }
+        applyBackgroundImage(image)
+    }
+
+    func useDesktopWallpaper() {
+        guard let screen = previewWindow?.screen ?? NSScreen.main,
+              let source = NSWorkspace.shared.desktopImageURL(for: screen).flatMap({ CGImageSourceCreateWithURL($0 as CFURL, nil) }),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 4096,
+                                                                         kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary) else {
+            message = "无法读取当前桌面壁纸（动态航拍壁纸不支持），请改用背景图片。"; return
+        }
+        applyBackgroundImage(image)
+    }
+
+    private func applyBackgroundImage(_ image: CGImage) {
+        guard let document, phase == .preview else { return }
         do { try RecordingMedia.writePNG(image, to: document.backgroundURL); style.background = .custom; refreshPreview() }
         catch { self.error = error.localizedDescription }
     }
@@ -499,7 +519,7 @@ final class RecordingController: NSObject, ObservableObject, NSWindowDelegate {
     func savePreset() {
         do {
             var preset = style
-            if preset.background == .custom { preset.background = .aurora }
+            if preset.background == .custom { preset.background = .goldenGate }
             UserDefaults.standard.set(try JSONEncoder().encode(preset), forKey: "recordingStyle.v1")
             message = "已保存为以后录屏的默认样式。"
         } catch { self.error = error.localizedDescription }

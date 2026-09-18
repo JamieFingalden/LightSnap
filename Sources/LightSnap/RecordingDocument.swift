@@ -4,10 +4,24 @@ import CaptureCore
 
 struct RecordingStyle: Codable, Equatable, Sendable {
     enum Aspect: String, Codable, CaseIterable { case original = "原始比例", wide = "16:9 横屏", portrait = "9:16 竖屏", square = "1:1 方形" }
-    enum Background: String, Codable, CaseIterable { case aurora = "极光", ocean = "海蓝", sunset = "日落", graphite = "石墨", white = "纯白", black = "纯黑", custom = "自选图片" }
+    enum Background: String, Codable, CaseIterable {
+        case goldenGate = "金门海峡", tahoe = "太浩湖", sequoia = "红杉", bigSur = "大瑟尔", catalina = "卡特琳娜岛", sonoma = "索诺马", monterey = "蒙特雷"
+        case white = "纯白", black = "纯黑", custom = "自选图片"
+
+        init?(rawValue: String) {
+            if let current = Self.allCases.first(where: { $0.rawValue == rawValue }) { self = current; return }
+            switch rawValue {
+            case "极光": self = .sequoia
+            case "海蓝": self = .tahoe
+            case "日落": self = .bigSur
+            case "石墨": self = .goldenGate
+            default: return nil
+            }
+        }
+    }
     enum CameraPosition: String, Codable, CaseIterable { case bottomRight = "右下", bottomLeft = "左下", topRight = "右上", topLeft = "左上" }
     var aspect = Aspect.original
-    var background = Background.aurora
+    var background = Background.goldenGate
     var padding = 0.065
     var cornerRadius = 18.0
     var shadow = 0.45

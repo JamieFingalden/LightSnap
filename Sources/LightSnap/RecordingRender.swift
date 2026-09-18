@@ -243,19 +243,65 @@ final class RecordingRenderer: @unchecked Sendable {
             .transformed(by: CGAffineTransform(translationX: 0, y: -offset))
     }
 
+    // 背景向各代 macOS 系统壁纸致敬：底色渐变叠加光斑，预览与导出共用，只随画布尺寸计算一次。
     private static func background(_ style: RecordingStyle.Background, imageURL: URL, in rect: CGRect) -> CIImage {
         if style == .custom, let image = CIImage(contentsOf: imageURL) { return fit(image, in: rect, fill: true) }
-        let colors: (CIColor, CIColor)
+        let base: (CIColor, CIColor)
+        let glows: [(color: CIColor, center: CGPoint, radius: CGFloat)]
         switch style {
-        case .aurora, .custom: colors = (CIColor(red: 0.20, green: 0.15, blue: 0.45), CIColor(red: 0.59, green: 0.57, blue: 0.92))
-        case .ocean: colors = (CIColor(red: 0.04, green: 0.25, blue: 0.40), CIColor(red: 0.25, green: 0.76, blue: 0.78))
-        case .sunset: colors = (CIColor(red: 0.87, green: 0.35, blue: 0.40), CIColor(red: 0.97, green: 0.76, blue: 0.54))
-        case .graphite: colors = (CIColor(red: 0.11, green: 0.13, blue: 0.18), CIColor(red: 0.29, green: 0.31, blue: 0.38))
-        case .white: colors = (.white, .white)
-        case .black: colors = (.black, .black)
+        case .goldenGate:
+            base = (CIColor(red: 0.10, green: 0.06, blue: 0.05), CIColor(red: 0.48, green: 0.24, blue: 0.08))
+            glows = [(CIColor(red: 1.0, green: 0.62, blue: 0.20, alpha: 0.42), CGPoint(x: 0.45, y: 0.55), 0.55),
+                     (CIColor(red: 0.90, green: 0.28, blue: 0.10, alpha: 0.28), CGPoint(x: 0.85, y: 0.15), 0.45),
+                     (CIColor(red: 0.55, green: 0.12, blue: 0.08, alpha: 0.22), CGPoint(x: 0.15, y: 0.85), 0.40)]
+        case .tahoe:
+            base = (CIColor(red: 0.16, green: 0.32, blue: 0.52), CIColor(red: 0.03, green: 0.09, blue: 0.20))
+            glows = [(CIColor(red: 0.45, green: 0.85, blue: 0.95, alpha: 0.32), CGPoint(x: 0.80, y: 0.78), 0.45),
+                     (CIColor(red: 0.15, green: 0.35, blue: 0.90, alpha: 0.30), CGPoint(x: 0.18, y: 0.20), 0.50),
+                     (CIColor(red: 0.75, green: 0.88, blue: 1.0, alpha: 0.14), CGPoint(x: 0.50, y: 0.50), 0.35)]
+        case .sequoia, .custom:
+            base = (CIColor(red: 0.09, green: 0.06, blue: 0.22), CIColor(red: 0.36, green: 0.16, blue: 0.50))
+            glows = [(CIColor(red: 0.92, green: 0.35, blue: 0.72, alpha: 0.35), CGPoint(x: 0.78, y: 0.75), 0.50),
+                     (CIColor(red: 0.28, green: 0.22, blue: 0.90, alpha: 0.32), CGPoint(x: 0.15, y: 0.15), 0.55),
+                     (CIColor(red: 0.55, green: 0.30, blue: 0.95, alpha: 0.22), CGPoint(x: 0.45, y: 0.45), 0.38)]
+        case .bigSur:
+            base = (CIColor(red: 0.95, green: 0.55, blue: 0.28), CIColor(red: 0.30, green: 0.18, blue: 0.55))
+            glows = [(CIColor(red: 1.0, green: 0.80, blue: 0.40, alpha: 0.35), CGPoint(x: 0.20, y: 0.80), 0.45),
+                     (CIColor(red: 0.95, green: 0.42, blue: 0.62, alpha: 0.40), CGPoint(x: 0.55, y: 0.45), 0.45),
+                     (CIColor(red: 0.22, green: 0.30, blue: 0.85, alpha: 0.32), CGPoint(x: 0.85, y: 0.15), 0.50)]
+        case .catalina:
+            base = (CIColor(red: 0.88, green: 0.52, blue: 0.35), CIColor(red: 0.02, green: 0.07, blue: 0.17))
+            glows = [(CIColor(red: 1.0, green: 0.72, blue: 0.38, alpha: 0.50), CGPoint(x: 0.60, y: 0.70), 0.42),
+                     (CIColor(red: 0.10, green: 0.45, blue: 0.55, alpha: 0.25), CGPoint(x: 0.25, y: 0.12), 0.50),
+                     (CIColor(red: 0.95, green: 0.55, blue: 0.50, alpha: 0.20), CGPoint(x: 0.85, y: 0.85), 0.35)]
+        case .sonoma:
+            base = (CIColor(red: 0.22, green: 0.03, blue: 0.10), CIColor(red: 0.72, green: 0.20, blue: 0.22))
+            glows = [(CIColor(red: 1.0, green: 0.45, blue: 0.18, alpha: 0.38), CGPoint(x: 0.75, y: 0.75), 0.50),
+                     (CIColor(red: 0.95, green: 0.38, blue: 0.52, alpha: 0.32), CGPoint(x: 0.35, y: 0.40), 0.45),
+                     (CIColor(red: 0.45, green: 0.04, blue: 0.12, alpha: 0.30), CGPoint(x: 0.12, y: 0.12), 0.50)]
+        case .monterey:
+            base = (CIColor(red: 0.04, green: 0.06, blue: 0.16), CIColor(red: 0.14, green: 0.18, blue: 0.42))
+            glows = [(CIColor(red: 0.20, green: 0.80, blue: 0.78, alpha: 0.32), CGPoint(x: 0.20, y: 0.75), 0.45),
+                     (CIColor(red: 0.95, green: 0.45, blue: 0.68, alpha: 0.28), CGPoint(x: 0.80, y: 0.60), 0.42),
+                     (CIColor(red: 1.0, green: 0.75, blue: 0.40, alpha: 0.20), CGPoint(x: 0.50, y: 0.15), 0.40)]
+        case .white: base = (CIColor.white, CIColor.white); glows = []
+        case .black: base = (CIColor.black, CIColor.black); glows = []
         }
-        return CIFilter(name: "CILinearGradient", parameters: ["inputPoint0": CIVector(x: rect.minX, y: rect.maxY), "inputPoint1": CIVector(x: rect.maxX, y: rect.minY),
-                                                               "inputColor0": colors.0, "inputColor1": colors.1])!.outputImage!.cropped(to: rect)
+        var result = CIFilter(name: "CILinearGradient", parameters: ["inputPoint0": CIVector(x: rect.minX, y: rect.maxY), "inputPoint1": CIVector(x: rect.maxX, y: rect.minY),
+                                                               "inputColor0": base.0, "inputColor1": base.1])!.outputImage!.cropped(to: rect)
+        for glow in glows { result = Self.glow(glow.color, center: glow.center, radius: glow.radius, rect: rect, over: result) }
+        return result
+    }
+
+    // 单个柔和光斑：径向渐变从中心色淡出到透明，按画布比例拉伸成椭圆后叠加。
+    private static func glow(_ color: CIColor, center: CGPoint, radius: CGFloat, rect: CGRect, over base: CIImage) -> CIImage {
+        let fade = CIColor(red: color.red, green: color.green, blue: color.blue, alpha: 0)
+        let gradient = CIFilter(name: "CIRadialGradient", parameters: ["inputCenter": CIVector(x: 0.5, y: 0.5), "inputRadius0": 0.0, "inputRadius1": 0.5,
+                                                                       "inputColor0": color, "inputColor1": fade])!.outputImage!
+        let width = radius * rect.width, height = radius * rect.height
+        let transform = CGAffineTransform(a: 2 * width, b: 0, c: 0, d: 2 * height,
+                                          tx: rect.minX + center.x * rect.width - width, ty: rect.minY + center.y * rect.height - height)
+        return gradient.transformed(by: transform).cropped(to: rect).composited(over: base)
     }
 
     private static func makeRing() -> CIImage {

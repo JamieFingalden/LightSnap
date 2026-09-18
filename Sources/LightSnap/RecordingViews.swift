@@ -8,10 +8,13 @@ private enum RecordingPalette {
 
     static func colors(_ background: RecordingStyle.Background) -> [Color] {
         switch background {
-        case .aurora, .custom: [.init(red: 0.3, green: 0.2, blue: 0.6), .init(red: 0.7, green: 0.65, blue: 1)]
-        case .ocean: [.init(red: 0.04, green: 0.25, blue: 0.4), .init(red: 0.25, green: 0.76, blue: 0.78)]
-        case .sunset: [.init(red: 0.87, green: 0.35, blue: 0.4), .init(red: 0.97, green: 0.76, blue: 0.54)]
-        case .graphite: [.init(white: 0.13), .init(white: 0.34)]
+        case .goldenGate: [.init(red: 0.10, green: 0.06, blue: 0.05), .init(red: 1.0, green: 0.62, blue: 0.20)]
+        case .tahoe: [.init(red: 0.03, green: 0.10, blue: 0.22), .init(red: 0.45, green: 0.85, blue: 0.95)]
+        case .sequoia, .custom: [.init(red: 0.09, green: 0.06, blue: 0.22), .init(red: 0.92, green: 0.35, blue: 0.72)]
+        case .bigSur: [.init(red: 0.98, green: 0.60, blue: 0.30), .init(red: 0.30, green: 0.18, blue: 0.55)]
+        case .catalina: [.init(red: 0.88, green: 0.52, blue: 0.35), .init(red: 0.02, green: 0.07, blue: 0.17)]
+        case .sonoma: [.init(red: 0.22, green: 0.03, blue: 0.10), .init(red: 1.0, green: 0.45, blue: 0.30)]
+        case .monterey: [.init(red: 0.05, green: 0.07, blue: 0.18), .init(red: 0.20, green: 0.80, blue: 0.78)]
         case .white: [.white, .white]
         case .black: [.black, .black]
         }
@@ -190,7 +193,7 @@ struct RecordingPreviewView: View {
             HStack(spacing: 0) {
                 VStack(spacing: 0) {
                     ZStack(alignment: .topTrailing) {
-                        RecordingPlayerView(player: model.player).clipShape(RoundedRectangle(cornerRadius: 10)).padding(24)
+                        RecordingPlayerView(player: model.player).aspectRatio(model.videoAspectRatio, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 10)).padding(24)
                         if model.rebuilding {
                             HStack(spacing: 8) { ProgressView().controlSize(.small); Text("更新预览…").font(.system(size: 11)) }
                                 .padding(10).background(.regularMaterial, in: Capsule()).padding(32)
@@ -281,7 +284,10 @@ struct RecordingPreviewView: View {
                     }.buttonStyle(.plain).help(background.rawValue).accessibilityLabel("\(background.rawValue)背景")
                 }
             }
-            Button("选择背景图片…", action: model.chooseBackground).font(.system(size: 11))
+            Menu {
+                Button("选择背景图片…", action: model.chooseBackground)
+                Button("使用当前桌面壁纸", action: model.useDesktopWallpaper)
+            } label: { Text("背景图片…").font(.system(size: 11)) }.menuStyle(.borderlessButton).frame(maxWidth: .infinity, alignment: .leading)
             RecordingSlider("留白", value: $model.style.padding, range: 0...0.18, label: "\(Int(model.style.padding * 100))%")
             RecordingSlider("圆角", value: $model.style.cornerRadius, range: 0...48, label: "\(Int(model.style.cornerRadius))")
             RecordingSlider("阴影", value: $model.style.shadow, range: 0...0.8, label: "\(Int(model.style.shadow * 100))%")
