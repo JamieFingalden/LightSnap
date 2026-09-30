@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 打包并发布 DMG
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建应用
+        run: zsh scripts/build.sh
+
+      - name: 校验标签与 Info.plist 版本一致
+        run: |
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' dist/LightSnap.app/Contents/Info.plist)"
+          if [[ "v${VERSION}" != "${GITHUB_REF_NAME}" ]]; then
+            echo "::error::标签 ${GITHUB_REF_NAME} 与 Info.plist 版本 ${VERSION} 不一致，请先更新 Support/Info.plist。" >&2
+            exit 1
+          fi
+
+      - name: 打包 DMG
+        run: zsh scripts/package-dmg.sh
+
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          NOTES="docs/releases/${TAG}.md"
+          if [[ -f "${NOTES}" ]]; then
+            NOTES_FLAG=(--notes-file "${NOTES}")
+          else
+            NOTES_FLAG=(--generate-notes)
+          fi
+          gh release create "${TAG}" dist/LightSnap-*-arm64.dmg dist/LightSnap-*-arm64.dmg.sha256 \
+            --title "LightSnap ${TAG}" "${NOTES_FLAG[@]}"
