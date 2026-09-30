@@ -3,6 +3,8 @@ set -euo pipefail
 PROJECT_DIR="${0:A:h:h}"
 export CLANG_MODULE_CACHE_PATH="${PROJECT_DIR}/.build/clang-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="${PROJECT_DIR}/.build/swift-cache"
+# --show-bin-path 不触发编译，全新检出的环境必须先真正构建出模块。
+swift build --package-path "${PROJECT_DIR}" -c release --arch arm64 --disable-sandbox
 BIN_DIR="$(swift build --package-path "${PROJECT_DIR}" -c release --arch arm64 --show-bin-path)"
 # 新旧 SwiftPM 产物布局：模块可能在 Modules/ 或产物目录本身，CaptureCore 可能是逐文件对象或单个 CaptureCore.o。
 MODULE_DIR="${BIN_DIR}/Modules"; [[ -d "${MODULE_DIR}" ]] || MODULE_DIR="${BIN_DIR}"
