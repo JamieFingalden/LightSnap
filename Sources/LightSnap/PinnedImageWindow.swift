@@ -114,21 +114,27 @@ final class PinnedImageWindow: NSWindowController, NSWindowDelegate {
         return frame.contains(mouse) ? mouse : CGPoint(x: frame.midX, y: frame.midY)
     }
 
-    private func fitWindowToImage(anchor: CGPoint) {
+    private func fitWindowToImage(anchor rawAnchor: CGPoint) {
         guard let window, let imageView = scroll.documentView,
               let visible = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else { return }
+        // 系统会把窗口 frame 对齐到整点；若请求的是分数尺寸，回读到的 frame 与请求不一致，
+        // 误差会随逐事件重算的锚点回灌累积成漂移。这里锚点、图片、窗口全部取整，
+        // 让「请求的 frame」就是「实际的 frame」，漂移在数学上归零。
+        let anchor = CGPoint(x: rawAnchor.x.rounded(), y: rawAnchor.y.rounded())
         let frame = window.frame
         let offset = scroll.contentView.bounds.origin
         let old = imageView.frame.size
         // 记录锚点落在图片上的相对位置（图片坐标向下为正），缩放后让同一点仍留在锚点下。
         let fx = min(1, max(0, (anchor.x - frame.minX - 1 + offset.x) / max(1, old.width)))
         let fy = min(1, max(0, (frame.maxY - 1 - anchor.y + offset.y) / max(1, old.height)))
-        let scaled = CGSize(width: imageSize.width * magnification, height: imageSize.height * magnification)
-        let size = CGSize(width: min(ceil(scaled.width) + 2, visible.width),
-                          height: min(ceil(scaled.height) + 2, visible.height))
+        // 图片尺寸量化到偶数：中心锚点恒为整数点、fx 恒等于 1/2，奇偶交替产生的 ±0.5 取整偏向随之消失。
+        let scaled = CGSize(width: (imageSize.width * magnification / 2).rounded() * 2,
+                            height: (imageSize.height * magnification / 2).rounded() * 2)
+        let size = CGSize(width: min(scaled.width + 2, visible.width.rounded(.down)),
+                          height: min(scaled.height + 2, visible.height.rounded(.down)))
         // 窗口贴合图片；超出屏幕的长图限制在可用范围内，剩余部分靠滚动查看。
-        let minX = max(visible.minX, min(anchor.x - fx * scaled.width - 1, visible.maxX - size.width))
-        let maxY = max(visible.minY + size.height, min(anchor.y + fy * scaled.height + 1, visible.maxY))
+        let minX = max(visible.minX.rounded(.up), min((anchor.x - fx * scaled.width - 1).rounded(), (visible.maxX - size.width).rounded(.down)))
+        let maxY = max(visible.minY.rounded(.up) + size.height, min((anchor.y + fy * scaled.height + 1).rounded(), visible.maxY.rounded(.down)))
         imageView.setFrameSize(scaled)
         window.setFrame(CGRect(x: minX, y: maxY - size.height, width: size.width, height: size.height), display: true)
         let origin = CGPoint(x: min(max(0, fx * scaled.width - (anchor.x - minX - 1)), max(0, scaled.width - size.width + 2)),

@@ -2,15 +2,15 @@
 
 面向 Apple Silicon 的 macOS 原生截图与录屏工具，使用 Swift、AppKit、ScreenCaptureKit 和系统图形框架，无第三方依赖。需要 macOS 14 或更新版本。
 
-当前版本为 **0.1.6 预览版**，录屏背景提供致敬 macOS 系统壁纸的七款渐变配色，也可一键使用当前桌面壁纸，详见[发布说明](docs/releases/v0.1.6.md)。
+当前版本为 **0.1.7 预览版**，修正贴图缩放时向左下角漂移的问题，详见[发布说明](docs/releases/v0.1.7.md)。
 
 ![截图与浮动工具栏](docs/ui-preview.png)
 
 ## 安装与运行
 
-从 [GitHub Releases](https://github.com/JamieFingalden/LightSnap/releases) 下载 `LightSnap-0.1.6-arm64.dmg`，打开后将 `LightSnap.app` 拖入 `Applications` 文件夹。安装包采用临时签名，未经过 Apple 公证；首次打开可能需要在 macOS「隐私与安全性」中确认。
+从 [GitHub Releases](https://github.com/JamieFingalden/LightSnap/releases) 下载 `LightSnap-0.1.7-arm64.dmg`，打开后将 `LightSnap.app` 拖入 `Applications` 文件夹。安装包采用临时签名，未经过 Apple 公证；首次打开可能需要在 macOS「隐私与安全性」中确认。
 
-本地安装包位于 `dist/LightSnap-0.1.6-arm64.dmg`，同目录的 `.sha256` 文件可校验安装包。
+本地安装包位于 `dist/LightSnap-0.1.7-arm64.dmg`，同目录的 `.sha256` 文件可校验安装包。
 
 从源码构建后，也可以直接打开 `dist/LightSnap.app`。启动后从菜单栏进入截图或录屏。首次截图或录屏需要在「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」中允许轻截；如果系统要求，退出后重新打开。
 
