@@ -15,6 +15,7 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
     private var toolButtons: [ToolButton] = []
     private var colorButtons: [ToolButton] = []
     private var widthButtons: [ToolButton] = []
+    private let fontSizePicker = NSPopUpButton(frame: .zero, pullsDown: false)
     private var busy = false {
         didSet {
             canvas.isExporting = busy
@@ -99,7 +100,7 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
     private func buildTools() {
         backdrop.addSubview(toolbar)
         backdrop.addSubview(stylebar)
-        let tools = [("rectangle", "矩形", 1), ("circle", "椭圆", 2), ("arrow.up.right", "箭头", 3), ("line.diagonal", "直线", 4)]
+        let tools = [("rectangle", "矩形", 1), ("circle", "椭圆", 2), ("arrow.up.right", "箭头", 3), ("line.diagonal", "直线", 4), ("textformat", "文字", 5)]
         for (symbol, label, tag) in tools {
             let button = ToolButton(symbol: symbol, label: label, target: self, action: #selector(changeTool(_:)))
             button.tag = tag
@@ -132,6 +133,17 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
             widthButtons.append(button)
             stylebar.add(button, width: 28)
         }
+        fontSizePicker.frame = CGRect(x: 7, y: 3, width: 84, height: 30)
+        for size in [24, 36, 48] {
+            fontSizePicker.addItem(withTitle: "字号 \(size)")
+            fontSizePicker.lastItem?.tag = size
+        }
+        fontSizePicker.selectItem(withTag: Int(canvas.fontSize))
+        fontSizePicker.target = self
+        fontSizePicker.refusesFirstResponder = true
+        fontSizePicker.action = #selector(changeFontSize(_:))
+        fontSizePicker.setAccessibilityLabel("文字字号")
+        stylebar.addSubview(fontSizePicker)
         stylebar.separator()
         for (index, color) in colors.enumerated() {
             let button = ToolButton(symbol: "square.fill", label: ["红色", "橙色", "黄色", "绿色", "蓝色", "黑色", "白色"][index], target: self, action: #selector(changeColor(_:)))
@@ -169,6 +181,10 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
     private func updateSelectionControls() {
         backdrop.showHandles = !busy && region != nil
         backdrop.canMoveSelection = !busy && region != nil && selectedTool == 0
+        fontSizePicker.isHidden = selectedTool != 5
+        fontSizePicker.selectItem(withTag: Int(canvas.fontSize))
+        widthButtons.forEach { $0.isHidden = selectedTool == 5 }
+        colorButtons.forEach { $0.chosen = colors[$0.tag].cgColor == canvas.color }
     }
 
     private func previewSelection(_ rect: CGRect) {
@@ -213,7 +229,7 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
         canvas.color = colors[sender.tag].cgColor
         canvas.applyStyle()
         colorButtons.forEach { $0.chosen = $0 === sender }
-        window?.makeFirstResponder(canvas)
+        if !canvas.isEditingText { window?.makeFirstResponder(canvas) }
     }
     @objc private func changeWidth(_ sender: ToolButton) {
         guard !busy else { return }
@@ -222,8 +238,15 @@ final class EditorWindow: NSWindowController, NSWindowDelegate {
         widthButtons.forEach { $0.chosen = $0 === sender }
         window?.makeFirstResponder(canvas)
     }
-    @objc private func undoEdit() { if !busy { canvas.history.undo() } }
-    @objc private func redoEdit() { if !busy { canvas.history.redo() } }
+    @objc private func changeFontSize(_ sender: NSPopUpButton) {
+        guard !busy, let item = sender.selectedItem else { return }
+        canvas.fontSize = CGFloat(item.tag)
+        canvas.applyStyle()
+        if canvas.isEditingText { return }
+        window?.makeFirstResponder(canvas)
+    }
+    @objc private func undoEdit() { if !busy { canvas.undoEdit() } }
+    @objc private func redoEdit() { if !busy { canvas.redoEdit() } }
     @objc private func startLong() {
         guard !busy, !backdrop.isAdjusting, let region else { return }
         dismiss()
