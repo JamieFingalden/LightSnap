@@ -41,9 +41,9 @@ struct SelectionCheck {
         var result: CGRect?
         view.finished = { completed = true; result = $0 }
 
-        func mouse(_ type: NSEvent.EventType, _ point: CGPoint, in target: NSView, modifiers: NSEvent.ModifierFlags = []) -> NSEvent {
+        func mouse(_ type: NSEvent.EventType, _ point: CGPoint, in target: NSView, modifiers: NSEvent.ModifierFlags = [], clickCount: Int = 1) -> NSEvent {
             NSEvent.mouseEvent(with: type, location: target.convert(point, to: nil), modifierFlags: modifiers, timestamp: 0,
-                               windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+                               windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clickCount, pressure: 1)!
         }
         let point = CGPoint(x: 100, y: 80)
         let expected = CGRect(x: 80, y: 40, width: 160, height: 140)
@@ -215,6 +215,70 @@ struct SelectionCheck {
         let pixels = CaptureRegion.pixelRect(for: CGRect(x: 20, y: 30, width: 100, height: 80), image: image, screenSize: CGSize(width: 800, height: 600))
         precondition(pixels == CGRect(x: 40, y: 60, width: 200, height: 160), "裁切与调整应使用一致的 Retina 像素坐标")
 
+        canvas.annotations = []
+        canvas.history.removeAllActions()
+        canvas.scale = 0.5
+        canvas.tool = 5
+        let textPoint = CGPoint(x: 20, y: 15)
+        canvas.mouseDown(with: mouse(.leftMouseDown, textPoint, in: canvas))
+        canvas.mouseUp(with: mouse(.leftMouseUp, textPoint, in: canvas))
+        let textEditor = canvas.subviews.compactMap { $0 as? NSTextView }.first!
+        precondition(canvas.isEditingText && window.firstResponder === textEditor, "文字工具单击应直接进入原生输入框")
+        textEditor.insertText("中文标注\n第二行", replacementRange: NSRange(location: NSNotFound, length: 0))
+        canvas.fontSize = 24
+        canvas.color = NSColor.systemBlue.cgColor
+        canvas.applyStyle()
+        let text = canvas.exportAnnotations[0]
+        precondition(!canvas.isEditingText && text.kind == .text && text.text == "中文标注\n第二行"
+                     && text.start == CGPoint(x: 40, y: 30) && text.fontSize == 24 && text.color == canvas.color,
+                     "导出必须提交输入中的中文、多行、字号与颜色，并正确换算缩放和裁切原点")
+        precondition(canvas.annotation(atViewPoint: CGPoint(x: 40, y: 25)) == 0, "文字内部应可命中，不能只响应边缘")
+        if canvas.history.groupingLevel > 0 { canvas.history.endUndoGrouping() }
+        canvas.undoEdit()
+        precondition(canvas.annotations.isEmpty, "撤销应移除新建文字")
+        canvas.redoEdit()
+        precondition(canvas.annotations.count == 1 && canvas.annotations[0].text == text.text, "重做应恢复完整文字")
+
+        canvas.history.beginUndoGrouping()
+        canvas.tool = 0
+        canvas.mouseDown(with: mouse(.leftMouseDown, CGPoint(x: 40, y: 25), in: canvas))
+        canvas.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: 50, y: 30), in: canvas))
+        canvas.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: 50, y: 30), in: canvas))
+        precondition(canvas.exportAnnotations[0].start == CGPoint(x: 60, y: 40), "移动文字应保持内容并按缩放换算位移")
+        canvas.mouseDown(with: mouse(.leftMouseDown, CGPoint(x: 50, y: 30), in: canvas, clickCount: 2))
+        let reopened = canvas.subviews.compactMap { $0 as? NSTextView }.first!
+        reopened.selectAll(nil)
+        reopened.insertText("修改后的文字", replacementRange: NSRange(location: NSNotFound, length: 0))
+        canvas.isExporting = true
+        precondition(canvas.annotations.count == 1 && canvas.annotations[0].text == "修改后的文字",
+                     "保存、复制与贴图进入导出状态前必须提交修改，不能重复新建文字")
+        canvas.isExporting = false
+
+        let output = try nextDocument.render(annotations: [text])
+        let rendered = try ImageCodec.context(width: output.width, height: output.height)
+        rendered.draw(output, in: CGRect(x: 0, y: 0, width: output.width, height: output.height))
+        let data = Data(bytes: rendered.data!, count: output.width * output.height * 4)
+        let ink = stride(from: 0, to: data.count, by: 4).filter { data[$0 + 2] > data[$0] && data[$0 + 3] > 0 }
+        precondition(!ink.isEmpty && ink.allSatisfy {
+            text.bounds.insetBy(dx: -1, dy: -1).contains(CGPoint(x: ($0 / 4) % output.width, y: ($0 / 4) / output.width))
+        }, "导出文字必须位于正确的裁切坐标内，不能上下颠倒")
+        precondition(ink.contains { ($0 / 4) / output.width > Int(text.start.y + text.fontSize * 1.3) },
+                     "第二行中文也必须完整导出")
+
+        let emptyPoint = CGPoint(x: 120, y: 85)
+        canvas.tool = 5
+        canvas.mouseDown(with: mouse(.leftMouseDown, emptyPoint, in: canvas))
+        canvas.mouseUp(with: mouse(.leftMouseUp, emptyPoint, in: canvas))
+        canvas.finishTextEditing()
+        precondition(canvas.annotations.count == 1, "空文本框不得生成标注或污染导出")
+        canvas.mouseDown(with: mouse(.leftMouseDown, emptyPoint, in: canvas))
+        canvas.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: 65, y: 85), in: canvas))
+        let draggedEditor = canvas.subviews.compactMap { $0 as? NSTextView }.first!
+        precondition(draggedEditor.frame.minX == 65 && draggedEditor.frame.width == 55, "反向拖动应使用最终文本框宽度")
+        draggedEditor.insertText("自动换行验证文字", replacementRange: NSRange(location: NSNotFound, length: 0))
+        precondition(window.makeFirstResponder(canvas) && !canvas.isEditingText && canvas.annotations.count == 2,
+                     "输入框失去焦点必须提交文字")
+
         if !NSScreen.screens.isEmpty {
             let editor = EditorWindow(document: document)
             let editorBackdrop = editor.window!.contentView as! EditorBackdrop
@@ -222,6 +286,9 @@ struct SelectionCheck {
             let buttons = editorBackdrop.subviews.compactMap { $0 as? ToolStrip }.flatMap { $0.subviews.compactMap { $0 as? ToolButton } }
             precondition(editorCanvas.tool == 0 && buttons.first { $0.tag == 0 && $0.toolTip == "移动选区与选择标注" }!.chosen,
                          "实际编辑器与工具栏的默认工具必须一致")
+            let textButton = buttons.first { $0.toolTip == "文字" }!
+            textButton.performClick(nil)
+            precondition(editorCanvas.tool == 5 && textButton.chosen, "实际工具栏必须能选择文字工具")
             var dismissed = false
             editor.onClose = { dismissed = true }
             let rightClick = NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
@@ -233,7 +300,7 @@ struct SelectionCheck {
         }
         window.contentView = nil
         window.close()
-        print("选区逻辑检查通过：嵌套控件定位、Esc 与辅助点按取消、默认移动、边角缩放、拖动预览、屏幕边界、工具栏点击、标注导出与撤销、不激活应用的浮层配置。")
+        print("选区逻辑检查通过：嵌套控件定位、Esc 与辅助点按取消、默认移动、边角缩放、拖动预览、屏幕边界、工具栏点击、文字输入与修改、标注导出与撤销、不激活应用的浮层配置。")
     }
 }
 SWIFT
