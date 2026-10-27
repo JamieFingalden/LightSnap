@@ -94,13 +94,20 @@ public enum ScrollMatcher {
         let ranked = refined.sorted { $0.value.error < $1.value.error }
         guard let best = ranked.first,
               best.value.error < joinErrorLimit, best.value.contrast > contrastFloor else { return .uncertain }
-        // 重复纹理会让相隔整周期的多个平移同样可信；放宽到全范围复核，仍有对手就维持不确定。
-        for shift in stride(from: 1, through: maxShift, by: 4) where abs(shift - best.key) > 4 {
-            if score(previous: previous, current: current, shift: shift, rows: 24).error < best.value.error + rivalMargin {
-                return .uncertain
+        // 重复纹理会让相隔整周期的多个平移同样可信；候选必须逐行复核全范围无对手才能拼接。
+        guard !hasEquivalentRival(previous: previous, current: current,
+                                  bestShift: best.key, bestError: best.value.error, maxShift: maxShift) else { return .uncertain }
+        return .append(best.key)
+    }
+
+    // 必须逐行扫描：抽样会系统性漏掉不落在采样格点上的周期对手（如等价平移 ≡ 7 mod 20 时 stride-4 全部错过）。
+    static func hasEquivalentRival(previous: GrayFrame, current: GrayFrame, bestShift: Int, bestError: Double, maxShift: Int) -> Bool {
+        for shift in 1...maxShift where abs(shift - bestShift) > 4 {
+            if score(previous: previous, current: current, shift: shift, rows: 24).error < bestError + rivalMargin {
+                return true
             }
         }
-        return .append(best.key)
+        return false
     }
 
     private static func validated(previous: GrayFrame, current: GrayFrame) -> (width: Int, height: Int)? {
