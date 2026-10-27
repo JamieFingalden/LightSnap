@@ -40,13 +40,14 @@ final class CaptureCoreTests: XCTestCase {
         XCTAssertEqual(ScrollMatcher.match(previous: reverse, current: first), .uncertain)
     }
 
-    private func stripedPage(period: Int = 20, offset: Int = 0) -> CGImage {
+    private func stripedPage(period: Int = 20, offset: Int = 0, varied: Bool = false) -> CGImage {
         let width = 160
         let height = 500
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
         for y in 0..<height {
-            let value = UInt8(((y + offset) % period) * 12)
             for x in 0..<width {
+                var value = UInt8(((y + offset) % period) * 12)
+                if varied { value = UInt8(((y + offset) % period) * 10 + (x % 7) * 3) }
                 let index = (y * width + x) * 4
                 pixels[index] = value
                 pixels[index + 1] = value
@@ -58,6 +59,29 @@ final class CaptureCoreTests: XCTestCase {
             bytesPerRow: width * 4, space: ImageCodec.colorSpace,
             bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
             provider: CGDataProvider(data: Data(pixels) as CFData)!, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+    }
+
+    func testEquivalentRivalScanCatchesOffCyclePeriod() throws {
+        let width = 160
+        let height = 500
+        // 周期 20、偏移 7：等价平移为 7、27、47…（≡7 mod 20），全部落在 stride-4 采样格点之外。
+        let previous = GrayFrame(pixels: (0..<(width * height)).map { UInt8(($0 / width % 20) * 12) }, width: width, height: height)
+        let current = GrayFrame(pixels: (0..<(width * height)).map { UInt8((($0 / width + 7) % 20) * 12) }, width: width, height: height)
+        XCTAssertTrue(ScrollMatcher.hasEquivalentRival(previous: previous, current: current, bestShift: 7, bestError: 0, maxShift: 400),
+            "逐行扫描必须发现周期对手，否则会在错误平移上拼接")
+        let page = page()
+        let uniquePrevious = try GrayFrame(image: XCTUnwrap(page.cropping(to: CGRect(x: 0, y: 0, width: 160, height: 500))))
+        let uniqueCurrent = try GrayFrame(image: XCTUnwrap(page.cropping(to: CGRect(x: 0, y: 93, width: 160, height: 500))))
+        XCTAssertFalse(ScrollMatcher.hasEquivalentRival(previous: uniquePrevious, current: uniqueCurrent, bestShift: 93, bestError: 0, maxShift: 400),
+            "非周期内容的唯一对齐不应误报对手")
+    }
+
+    func testVisionRefineRejectsRivalOffCyclePeriod() throws {
+        let previous = stripedPage(period: 20, offset: 0, varied: true)
+        let current = stripedPage(period: 20, offset: 7, varied: true)
+        let result = ScrollMatcher.refine(previousImage: previous, currentImage: current,
+            previous: try GrayFrame(image: previous), current: try GrayFrame(image: current))
+        XCTAssertEqual(result, .uncertain, "周期对手不在采样格点上时，配准复核仍须拒绝拼接")
     }
 
     func testVisionRefineAgreesWithKnownOffset() throws {
