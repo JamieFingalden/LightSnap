@@ -9,8 +9,11 @@ private final class ScrollWorker: NSObject, SCStreamOutput, @unchecked Sendable 
     var update: ((String) -> Void)?
     private var document: ImageDocument?
     private var previous: GrayFrame?
+    private var previousImage: CGImage?
     private var stopped = false
     private var lastMessage = ""
+    private var lastShift = 0
+    private var uncertainStreak = 0
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard !stopped, type == .screen, sampleBuffer.isValid,
@@ -23,25 +26,29 @@ private final class ScrollWorker: NSObject, SCStreamOutput, @unchecked Sendable 
                 let status = VTCreateCGImageFromCVPixelBuffer(buffer, options: nil, imageOut: &output)
                 guard status == noErr, let image = output else { throw CaptureError.message("无法读取屏幕画面。") }
                 let gray = try GrayFrame(image: image)
-                if let previous, let document {
-                    switch ScrollMatcher.match(previous: previous, current: gray) {
+                if let previous, let document, let previousImage {
+                    var result = ScrollMatcher.match(previous: previous, current: gray)
+                    if case .uncertain = result {
+                        // 快速采样拿不准时交给 Vision 图像配准复核，仍不确定才提示回滚。
+                        result = ScrollMatcher.refine(previousImage: previousImage, currentImage: image,
+                                                      previous: previous, current: gray)
+                    }
+                    switch result {
                     case .unchanged:
+                        uncertainStreak = 0
                         notify("已截取 \(document.height) px · 请继续缓慢向下滚动")
                     case .uncertain:
-                        notify("重叠不明确：请回滚到已截位置，再缓慢向下滚动")
+                        uncertainStreak += 1
+                        notify(uncertainAdvice(frameHeight: gray.height))
                     case .append(let shift):
-                        guard let strip = image.cropping(to: CGRect(x: 0, y: image.height - shift, width: image.width, height: shift)) else {
-                            throw CaptureError.message("无法裁剪新增内容。")
-                        }
-                        try document.append(strip)
-                        self.previous = gray
-                        notify("已截取 \(document.height) px · 请继续缓慢向下滚动")
+                        try accept(shift: shift, image: image, gray: gray, document: document)
                     }
                 } else {
                     let document = try ImageDocument(width: image.width)
                     try document.append(image)
                     self.document = document
                     previous = gray
+                    previousImage = image
                     notify("已截取 \(document.height) px · 请缓慢向下滚动")
                 }
             } catch {
@@ -49,6 +56,32 @@ private final class ScrollWorker: NSObject, SCStreamOutput, @unchecked Sendable 
                 notify("\(error.localizedDescription) 已保留成功部分，可点击完成。")
             }
         }
+    }
+
+    private func accept(shift: Int, image: CGImage, gray: GrayFrame, document: ImageDocument) throws {
+        guard let strip = image.cropping(to: CGRect(x: 0, y: image.height - shift, width: image.width, height: shift)) else {
+            throw CaptureError.message("无法裁剪新增内容。")
+        }
+        try document.append(strip)
+        previous = gray
+        previousImage = image
+        lastShift = shift
+        uncertainStreak = 0
+        notify(scrolledTooFast(shift: shift, frameHeight: gray.height)
+            ? "已截取 \(document.height) px · 滚动偏快，放慢一点更稳"
+            : "已截取 \(document.height) px · 请继续缓慢向下滚动")
+    }
+
+    // 单帧位移超过半屏即视为滚动偏快；重叠区随之过窄，是拼接失败的主要来源。
+    private func scrolledTooFast(shift: Int, frameHeight: Int) -> Bool {
+        shift * 2 > frameHeight
+    }
+
+    private func uncertainAdvice(frameHeight: Int) -> String {
+        guard uncertainStreak > 1 || scrolledTooFast(shift: lastShift, frameHeight: frameHeight) else {
+            return "重叠不明确：请回滚到已截位置，再缓慢向下滚动"
+        }
+        return "滚动过快、重叠不足：请回滚到已截位置，放慢再继续"
     }
 
     private func notify(_ message: String) {
@@ -62,6 +95,7 @@ private final class ScrollWorker: NSObject, SCStreamOutput, @unchecked Sendable 
             queue.async {
                 self.stopped = true
                 self.previous = nil
+                self.previousImage = nil
                 let document = self.document
                 self.document = nil
                 continuation.resume(returning: document)

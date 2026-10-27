@@ -40,6 +40,47 @@ final class CaptureCoreTests: XCTestCase {
         XCTAssertEqual(ScrollMatcher.match(previous: reverse, current: first), .uncertain)
     }
 
+    private func stripedPage(period: Int = 20, offset: Int = 0) -> CGImage {
+        let width = 160
+        let height = 500
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        for y in 0..<height {
+            let value = UInt8(((y + offset) % period) * 12)
+            for x in 0..<width {
+                let index = (y * width + x) * 4
+                pixels[index] = value
+                pixels[index + 1] = value
+                pixels[index + 2] = value
+                pixels[index + 3] = 255
+            }
+        }
+        return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: width * 4, space: ImageCodec.colorSpace,
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+            provider: CGDataProvider(data: Data(pixels) as CFData)!, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+    }
+
+    func testVisionRefineAgreesWithKnownOffset() throws {
+        let page = page()
+        let first = try XCTUnwrap(page.cropping(to: CGRect(x: 0, y: 0, width: 160, height: 500)))
+        let shifted = try XCTUnwrap(page.cropping(to: CGRect(x: 0, y: 93, width: 160, height: 500)))
+        let result = ScrollMatcher.refine(previousImage: first, currentImage: shifted,
+            previous: try GrayFrame(image: first), current: try GrayFrame(image: shifted))
+        XCTAssertEqual(result, .append(93), "Vision 配准复核应还原已知偏移")
+    }
+
+    func testVisionRefineRejectsAmbiguousOverlap() throws {
+        let page = page()
+        let first = try XCTUnwrap(page.cropping(to: CGRect(x: 0, y: 0, width: 160, height: 500)))
+        let unrelated = try XCTUnwrap(page.cropping(to: CGRect(x: 0, y: 900, width: 160, height: 500)))
+        XCTAssertEqual(ScrollMatcher.refine(previousImage: first, currentImage: unrelated,
+            previous: try GrayFrame(image: first), current: try GrayFrame(image: unrelated)), .uncertain,
+            "无重叠的两帧即使经过配准也不得拼接")
+        let repetitive = ScrollMatcher.refine(previousImage: stripedPage(), currentImage: stripedPage(offset: 7),
+            previous: try GrayFrame(image: stripedPage()), current: try GrayFrame(image: stripedPage(offset: 7)))
+        XCTAssertEqual(repetitive, .uncertain, "重复纹理存在多个等价平移时配准复核仍应拒绝")
+    }
+
     func testNoOverlapAndInvalidInputAreRejected() throws {
         let page = page()
         let first = try GrayFrame(image: page.cropping(to: CGRect(x: 0, y: 0, width: 160, height: 500))!)
